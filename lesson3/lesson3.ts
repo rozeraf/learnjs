@@ -14,7 +14,7 @@ let sum = 0; // вероятно затем, чтобы изначальный �
 for (const num of numbers2) {
   // i - это индекс (0,1,2) - ладно, допустим.
   // numbers[i] - это элемент, например 10, 20 или 30. - допустим.
-  sum = sum + num; 
+  sum = sum + num;
 }
 console.log(sum);
 // задача 3
@@ -26,3 +26,7 @@ const sumArray = (data: number[]): number => {
   return sum;
 };
 console.log(sumArray(numbers));
+// task 4
+const names2: string[] = ["ivan", "raf", "tair"];
+const greetAll = (data: string[]) => data.map((name2) => `hello, ${name2}`);
+console.log(greetAll(names2));
