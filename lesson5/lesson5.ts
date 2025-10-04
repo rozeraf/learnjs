@@ -29,7 +29,7 @@ for (const car of garage) {
   console.log(car.getDescription());
 }
 function findCarByModel(model: string): Car | undefined {
-  return garage.find((car) => car.model.toLowerCase === model.toLowerCase);
+  return garage.find((car) => car.model.toLowerCase() === model.toLowerCase());
 }
 const input: string | null = prompt('enter car model: ');
 
