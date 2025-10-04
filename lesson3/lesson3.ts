@@ -4,7 +4,7 @@ console.log(numbers[2]);
 numbers.push(6);
 console.log(numbers);
 // задача 2
-const names: string[] = ["иван", "раф", "таир"];
+const names: string[] = ['иван', 'раф', 'таир'];
 names.forEach((name) => {
   console.log(`Привет, ${name}`);
 });
@@ -27,6 +27,6 @@ const sumArray = (data: number[]): number => {
 };
 console.log(sumArray(numbers));
 // task 4
-const names2: string[] = ["ivan", "raf", "tair"];
+const names2: string[] = ['ivan', 'raf', 'tair'];
 const greetAll = (data: string[]) => data.map((name2) => `hello, ${name2}`);
 console.log(greetAll(names2));
