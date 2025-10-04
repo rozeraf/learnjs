@@ -1,6 +1,3 @@
-import { ModuleKind } from 'typescript';
-
-// task 1 & 2 & 3
 class Car {
   constructor(
     public brand: string,
@@ -13,6 +10,13 @@ class Car {
     return `${this.brand} ${this.model}, ${this.year}`;
   }
 
+  getFullDescription(): string {
+    return `Brand: ${this.brand}
+        Model: ${this.model}
+        Year: ${this.year}
+    Vin code: ${this._vinCode}`;
+  }
+
   getVin(): string {
     return this._vinCode;
   }
@@ -21,35 +25,18 @@ const garage: Car[] = [
   new Car('Lamorgini', 'Huracan', 2011, 'policecaronly'),
   new Car('Toyota', 'Camry', 2021, 'policecarmaybe'),
 ];
-
-// const car1 = new Car("Toyota", "Camry", 2021, "policecarmaybe");
-// garage.push(car1);
-
-// const car2 = new Car("Lamorgini", "Huracan", 2011, "policecaronly");
-// garage.push(car2);
-
 for (const car of garage) {
   console.log(car.getDescription());
 }
-// console.log(car1.getDescription());
-// console.log(car2.getDescription());
-// console.log(car1.getVin())
 function findCarByModel(model: string): Car | undefined {
-  return garage.find((car) => car.model === model);
+  return garage.find((car) => car.model.toLowerCase === model.toLowerCase);
 }
 const input: string | null = prompt('enter car model: ');
 
-if (input !== null) {
-  const foundCar = findCarByModel(input);
+const foundCar = input && findCarByModel(input);
 
-  if (foundCar) {
-    console.log(`
-        Brand: ${foundCar.brand}
-        Model: ${foundCar.model}
-        Year: ${foundCar.year}
-        Vin code: ${foundCar.getVin()}
-    `);
-  } else {
-    console.log('You cant go further');
-  }
+if (foundCar) {
+  console.log(foundCar.getFullDescription());
+} else {
+  console.log('You cant go further');
 }
