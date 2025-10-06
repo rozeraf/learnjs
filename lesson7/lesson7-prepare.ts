@@ -35,3 +35,4 @@ item1.calculatePrice();
 // setTimeout(() => {
 //   console.log(user.name);
 // }, 1000);
+export {};
