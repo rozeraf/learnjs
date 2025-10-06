@@ -1,3 +1,4 @@
+// task 1
 class Counter {
   constructor(private _count: number = 0) {}
   increment() {
@@ -9,6 +10,7 @@ const counter = new Counter();
 // standaloneIncrement();
 const boundIncrement = counter.increment.bind(counter);
 boundIncrement();
+// task 2
 const user1 = { name: 'Ivan' };
 const user2 = { name: 'maria' };
 function sayName(this: { name: string }) {
@@ -16,6 +18,7 @@ function sayName(this: { name: string }) {
 }
 sayName.call(user1);
 sayName.call(user2);
+// task 3
 class Timer {
   constructor(public message: string = 'abcd') {}
   start() {
