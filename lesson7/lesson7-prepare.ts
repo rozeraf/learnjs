@@ -18,14 +18,14 @@ introduce.apply(user2, userInfo);
 const introduceRaf = introduce.bind(user1);
 introduceRaf('student', 'russia');
 
-const item = {
+const item1 = {
   title: 'phone',
   fullPrice: 1000,
   calculatePrice(discount: number = 50) {
     console.log(this.fullPrice - (discount / 100) * this.fullPrice);
   },
 };
-item.calculatePrice();
+item1.calculatePrice();
 
 // const user = {
 //   name: 'Alice',
