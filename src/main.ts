@@ -1,3 +1,23 @@
+function introduce(
+  this: { name: string },
+  profession: string,
+  country: string,
+) {
+  console.log(
+    `Hello, my name is ${this.name}, i'm a ${profession} from ${country}`,
+  );
+}
+
+const user1 = { name: 'raf' };
+introduce.call(user1, 'coder', 'kazakhstan');
+
+const user2 = { name: 'maria' };
+const userInfo: [string, string] = ['designer', 'spain'];
+introduce.apply(user2, userInfo);
+
+const introduceRaf = introduce.bind(user1);
+introduceRaf('student', 'russia');
+
 const item = {
   title: 'phone',
   fullPrice: 1000,
@@ -6,6 +26,7 @@ const item = {
   },
 };
 item.calculatePrice();
+
 // const user = {
 //   name: 'Alice',
 // };
