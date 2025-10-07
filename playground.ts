@@ -1,13 +1,12 @@
-// function calculateNumber(x) {
-//   let x = 5;
-//   x += 100;
-//   x = x / 5;
-//   return x;
-// }
-// const result = calculateNumber(5);
-// console.log(result);
-// function calculateS(r: number) {
-//   return Math.PI * r ** 2;
-// }
-// const r = Number(prompt('Введите радиус круга (см)'));
-// console.log(calculateS(r));
+const calculator = {
+  multiplier: 2,
+  numbers: [1, 2, 3],
+
+  // Исправь метод, чтобы он возвращал [2, 4, 6]
+  getDoubled() {
+    return this.numbers.map((n) => {
+      return n * this.multiplier; // ошибка здесь
+    });
+  },
+};
+console.log(calculator.getDoubled());
