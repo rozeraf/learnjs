@@ -29,3 +29,4 @@ class Timer {
 }
 const timer = new Timer('Привет');
 timer.start();
+export {};
