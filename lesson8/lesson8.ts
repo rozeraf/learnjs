@@ -1,56 +1,31 @@
-// // method 1
-// for (let i = 0; i < 3; i++) {
-//   setTimeout(() => {
-//     console.log(i);
-//   }, 100);
-// }
-// // method 2
-// for (var i = 0; i < 3; i++) {
-//   (function (j) {
-//     setTimeout(() => console.log(j), 100);
-//   })(i);
-// }
-// // method 3
-// function logNumber(num: number) {
-//   console.log(num);
-// }
+function useState<T>(initialValue: T): [() => T, (newValue: T) => void] {
+  let state = initialValue;
 
-// for (var i = 0; i < 3; i++) {
-//   const logger = logNumber.bind(null, i);
-//   setTimeout(logger, 100);
-// }
-
-function createBankAccount(initialBalance: number) {
-  let balance = initialBalance;
-
-  return {
-    deposit(amount: number): void {
-      balance += amount;
-    },
-    withdraw(amount: number): void {
-      if (amount > balance) {
-        throw new Error('Not enough balance');
-      }
-      balance -= amount;
-    },
-    getBalance(): number {
-      return balance;
-    },
+  const getter = () => {
+    //this fn must just return state
+    return state;
   };
+
+  const setter = (newValue: T) => {
+    // this fn must accept newValue and update state
+    state = newValue;
+    return state;
+  };
+  return [getter, setter];
 }
-const account = createBankAccount(100);
-console.log(`Initial balance: ${account.getBalance()}`);
+console.log('\n--- useState Replica ---');
 
-account.deposit(50);
-console.log(`After Deposit: ${account.getBalance()}`);
+const [getCount, setCount] = useState(0);
+console.log('Initial count:', getCount());
+setCount(5);
+console.log('After setCount(5)', getCount());
+setCount(10);
+console.log('After setCount(10):', getCount());
 
-account.withdraw(30);
-console.log(`After withdrowal: ${account.getBalance()}`);
+console.log();
 
-try {
-  account.withdraw(200);
-} catch (e) {
-  if (e instanceof Error) {
-    console.log(`Caught expected error: ${e.message}`);
-  }
-}
+const [getName, setName] = useState('Alice');
+console.log('Initial name:', getName());
+setName('Bob');
+console.log('After setName("Bob"):', getName());
+console.log('Count is still:', getCount());
