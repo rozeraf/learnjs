@@ -1,14 +1,16 @@
-function identity<T>(x: T): T {
-  return x;
+function createCounter(n: number): () => void {
+  return function () {
+    console.log(n++);
+  };
 }
-console.log(identity(5));
-console.log();
 
-function logKeys<T extends Record<string, any>>(obj: T) {
-  for (const key in obj) {
-    console.log(key);
-    console.log(obj[key]);
-    console.log();
-  }
-}
-logKeys({ name: 'Raf', age: 13 });
+const counter = createCounter(10);
+counter(); // 10
+counter(); // 11
+counter(); // 12
+/**
+ * const counter = createCounter(10)
+ * counter() // 10
+ * counter() // 11
+ * counter() // 12
+ */
