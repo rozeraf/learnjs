@@ -1,16 +1,5 @@
-function createCounter(n: number): () => void {
-  return function () {
-    console.log(n++);
-  };
+function increment_all(arr: number[]) {
+  arr.forEach((v, i, a) => (a[i] = v + 1));
+  return arr;
 }
-
-const counter = createCounter(10);
-counter(); // 10
-counter(); // 11
-counter(); // 12
-/**
- * const counter = createCounter(10)
- * counter() // 10
- * counter() // 11
- * counter() // 12
- */
+console.log(increment_all([1, 3, 54]));
