@@ -1,4 +1,3 @@
-import { transform } from 'typescript';
 import type * as Types from './types';
 const createFinanceManager = () => {
   let transactions: Types.Transaction[] = [];
@@ -36,7 +35,7 @@ const createFinanceManager = () => {
   };
   return { add, getAll, getById, remove, update };
 };
-const calculatebalance = (
+const calculateBalance = (
   transactions: readonly Types.Transaction[],
 ): number => {
   return transactions.reduce((balance, t) => {
@@ -93,6 +92,26 @@ const commands: Record<string, CommandHandler> = {
       return;
     }
     console.table(transactions);
+  },
+  balance: () => {
+    const allTransactions = financeManager.getAll();
+    const totalBalance = calculateBalance(allTransactions);
+    console.log(`Current balance: ${totalBalance.toFixed(2)}`);
+  },
+  delete: (args) => {
+    const [idStr] = args;
+    const id = parseInt(idStr, 10);
+    if (isNaN(id)) {
+      console.error('error: invalid id, please provide a number');
+      return;
+    }
+    const success = financeManager.remove(id);
+
+    if (success) {
+      console.log(`transaction with id ${id} has been deleted`);
+    } else {
+      console.error(`error: transaction with id ${id} not found`);
+    }
   },
 };
 async function main() {
