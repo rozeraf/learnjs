@@ -1,0 +1,18 @@
+[
+  {
+    "id": 1,
+    "amount": 150,
+    "category": "food",
+    "description": "products for lunch",
+    "type": "expense",
+    "date": "2025-10-25T18:03:12.885Z"
+  },
+  {
+    "id": 2,
+    "amount": 150,
+    "category": "food",
+    "description": "products for lunch",
+    "type": "expense",
+    "date": "2025-10-25T18:03:12.885Z"
+  }
+]

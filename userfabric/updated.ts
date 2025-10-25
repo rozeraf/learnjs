@@ -1,7 +1,10 @@
 type UserRole = 'user' | 'admin' | 'guest';
 
 class User {
-  constructor(public name: string, public readonly role: UserRole = 'user') {}
+  constructor(
+    public name: string,
+    public readonly role: UserRole = 'user',
+  ) {}
   info(): string {
     return `${this.role}: ${this.name}`;
   }
