@@ -1,0 +1,2180 @@
+import * as Types from './types';
+
+// ============================================================================
+// Domain Layer - Pure Business Logic
+// ============================================================================
+
+// Domain Constants
+const TRANSACTION_TYPES = ['income', 'expense'] as const;
+const CATEGORIES = ['food', 'transport', 'entertainment', 'salary', 'other'] as const;
+
+type TransactionType = typeof TRANSACTION_TYPES[number];
+type Category = typeof CATEGORIES[number];
+
+// Result Type
+type Result<T, E = Error> = 
+  | { ok: true; value: T }
+  | { ok: false; error: E };
+
+const Ok = <T>(value: T): Result<T> => ({ ok: true, value });
+const Err = <T, E = Error>(error: E): Result<T, E> => ({ ok: false, error });
+
+// Domain Errors
+class DomainError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = this.constructor.name;
+  }
+}
+
+class ValidationError extends DomainError {}
+class NotFoundError extends DomainError {}
+
+// Domain Entities
+interface Transaction {
+  readonly id: number;
+  readonly date: string;
+  readonly type: TransactionType;
+  readonly amount: number;
+  readonly category: Category;
+  readonly description?: string;
+}
+
+interface TransactionInput {
+  readonly type: TransactionType;
+  readonly amount: number;
+  readonly category: Category;
+  readonly description?: string;
+}
+
+// Domain Validator
+class TransactionValidator {
+  static validate(input: TransactionInput): Result<TransactionInput, ValidationError> {
+    if (!TRANSACTION_TYPES.includes(input.type)) {
+      return Err(new ValidationError(
+        `Invalid type "${input.type}". Valid: ${TRANSACTION_TYPES.join(', ')}`
+      ));
+    }
+
+    if (!CATEGORIES.includes(input.category)) {
+      return Err(new ValidationError(
+        `Invalid category "${input.category}". Valid: ${CATEGORIES.join(', ')}`
+      ));
+    }
+
+    if (input.amount <= 0) {
+      return Err(new ValidationError('Amount must be positive'));
+    }
+
+    if (!Number.isFinite(input.amount)) {
+      return Err(new ValidationError('Amount must be a finite number'));
+    }
+
+    return Ok(input);
+  }
+
+  static validatePartialUpdate(
+    updates: Partial<Omit<Transaction, 'id' | 'date'>>
+  ): Result<Partial<Omit<Transaction, 'id' | 'date'>>, ValidationError> {
+    if (updates.type && !TRANSACTION_TYPES.includes(updates.type)) {
+      return Err(new ValidationError(
+        `Invalid type "${updates.type}". Valid: ${TRANSACTION_TYPES.join(', ')}`
+      ));
+    }
+
+    if (updates.category && !CATEGORIES.includes(updates.category)) {
+      return Err(new ValidationError(
+        `Invalid category "${updates.category}". Valid: ${CATEGORIES.join(', ')}`
+      ));
+    }
+
+    if (updates.amount !== undefined) {
+      if (updates.amount <= 0) {
+        return Err(new ValidationError('Amount must be positive'));
+      }
+      if (!Number.isFinite(updates.amount)) {
+        return Err(new ValidationError('Amount must be a finite number'));
+      }
+    }
+
+    return Ok(updates);
+  }
+}
+
+// Repository Interface
+interface FinanceRepository {
+  add(transaction: Transaction): void;
+  findById(id: number): Transaction | undefined;
+  findAll(): readonly Transaction[];
+  remove(id: number): boolean;
+  update(id: number, transaction: Transaction): boolean;
+}
+
+// Domain Service
+class FinanceService {
+  private nextId = 1;
+
+  constructor(private readonly repository: FinanceRepository) {}
+
+  createTransaction(input: TransactionInput): Result<Transaction, DomainError> {
+    const validationResult = TransactionValidator.validate(input);
+    if (!validationResult.ok) return validationResult;
+
+    const transaction: Transaction = {
+      id: this.nextId++,
+      date: new Date().toISOString(),
+      ...validationResult.value,
+    };
+
+    this.repository.add(transaction);
+    return Ok(transaction);
+  }
+
+  getTransaction(id: number): Result<Transaction, NotFoundError> {
+    const transaction = this.repository.findById(id);
+    return transaction
+      ? Ok(transaction)
+      : Err(new NotFoundError(`Transaction #${id} not found`));
+  }
+
+  getAllTransactions(): readonly Transaction[] {
+    return this.repository.findAll();
+  }
+
+  deleteTransaction(id: number): Result<void, NotFoundError> {
+    const exists = this.repository.findById(id);
+    if (!exists) {
+      return Err(new NotFoundError(`Transaction #${id} not found`));
+    }
+
+    this.repository.remove(id);
+    return Ok(undefined);
+  }
+
+  updateTransaction(
+    id: number,
+    updates: Partial<Omit<Transaction, 'id' | 'date'>>
+  ): Result<Transaction, DomainError> {
+    const existingResult = this.getTransaction(id);
+    if (!existingResult.ok) return existingResult;
+
+    const validationResult = TransactionValidator.validatePartialUpdate(updates);
+    if (!validationResult.ok) return validationResult;
+
+    const updated: Transaction = { ...existingResult.value, ...validationResult.value };
+    this.repository.update(id, updated);
+    return Ok(updated);
+  }
+
+  calculateBalance(): { income: number; expense: number; total: number } {
+    const transactions = this.repository.findAll();
+    const income = transactions
+      .filter((t) => t.type === 'income')
+      .reduce((sum, t) => sum + t.amount, 0);
+    const expense = transactions
+      .filter((t) => t.type === 'expense')
+      .reduce((sum, t) => sum + t.amount, 0);
+    return { income, expense, total: income - expense };
+  }
+
+  hydrate(transactions: readonly Transaction[]): void {
+    const maxId = transactions.reduce((max, t) => Math.max(max, t.id), 0);
+    this.nextId = maxId + 1;
+    transactions.forEach((t) => this.repository.add(t));
+  }
+}
+
+// ============================================================================
+// Infrastructure Layer
+// ============================================================================
+
+class InMemoryFinanceRepository implements FinanceRepository {
+  private transactions = new Map<number, Transaction>();
+
+  add(transaction: Transaction): void {
+    this.transactions.set(transaction.id, transaction);
+  }
+
+  findById(id: number): Transaction | undefined {
+    return this.transactions.get(id);
+  }
+
+  findAll(): readonly Transaction[] {
+    return Array.from(this.transactions.values());
+  }
+
+  remove(id: number): boolean {
+    return this.transactions.delete(id);
+  }
+
+  update(id: number, transaction: Transaction): boolean {
+    if (!this.transactions.has(id)) return false;
+    this.transactions.set(id, transaction);
+    return true;
+  }
+}
+
+interface StorageAdapter {
+  load(): Promise<readonly Transaction[]>;
+  save(transactions: readonly Transaction[]): Promise<void>;
+}
+
+class JsonFileStorage implements StorageAdapter {
+  constructor(private readonly filepath: string) {}
+
+  async load(): Promise<readonly Transaction[]> {
+    const file = Bun.file(this.filepath);
+    if (!(await file.exists())) return [];
+    return await file.json();
+  }
+
+  async save(transactions: readonly Transaction[]): Promise<void> {
+    await Bun.write(this.filepath, JSON.stringify(transactions, null, 2));
+  }
+}
+
+// ============================================================================
+// Presentation Layer - View Models & Renderer
+// ============================================================================
+
+interface TransactionViewModel {
+  readonly id: number;
+  readonly date: string;
+  readonly type: string;
+  readonly amount: string;
+  readonly category: string;
+  readonly description: string;
+}
+
+interface BalanceViewModel {
+  readonly income: string;
+  readonly expense: string;
+  readonly total: string;
+}
+
+class ConsoleRenderer {
+  static renderTransaction(transaction: Transaction): void {
+    console.log('✓ Transaction:');
+    console.log(`  #${transaction.id} | ${transaction.type} | ${transaction.amount} | ${transaction.category}`);
+    if (transaction.description) {
+      console.log(`  ${transaction.description}`);
+    }
+  }
+
+  static renderTransactionList(transactions: readonly Transaction[]): void {
+    if (transactions.length === 0) {
+      console.log('No transactions. Use "add" to create one.');
+      return;
+    }
+
+    const viewModels: TransactionViewModel[] = transactions.map((t) => ({
+      id: t.id,
+      date: new Date(t.date).toLocaleString(),
+      type: t.type,
+      amount: t.amount.toFixed(2),
+      category: t.category,
+      description: t.description ?? '—',
+    }));
+
+    console.table(viewModels);
+  }
+
+  static renderBalance(balance: { income: number; expense: number; total: number }): void {
+    console.log('='.repeat(40));
+    console.log(`Income:   +${balance.income.toFixed(2)}`);
+    console.log(`Expense:  -${balance.expense.toFixed(2)}`);
+    console.log('='.repeat(40));
+    console.log(`Balance:   ${balance.total.toFixed(2)}`);
+    console.log('='.repeat(40));
+  }
+
+  static renderError(error: Error): void {
+    console.error(`Error: ${error.message}`);
+  }
+
+  static renderHelp(): void {
+    console.log('Commands:');
+    console.log('  add <type> <amount> <category> [description]');
+    console.log('  list');
+    console.log('  balance');
+    console.log('  delete <id>');
+    console.log('  update <id> <field> <value>');
+    console.log('  help');
+    console.log('\nTypes:', TRANSACTION_TYPES.join(', '));
+    console.log('Categories:', CATEGORIES.join(', '));
+  }
+}
+
+// ============================================================================
+// Presentation Layer - Commands
+// ============================================================================
+
+type CommandName = 'add' | 'list' | 'balance' | 'delete' | 'update' | 'help';
+
+interface CommandContext {
+  readonly service: FinanceService;
+  readonly args: readonly string[];
+  readonly renderer: typeof ConsoleRenderer;
+}
+
+interface Command {
+  execute(ctx: CommandContext): Result<void, Error>;
+}
+
+class AddCommand implements Command {
+  execute({ service, args, renderer }: CommandContext): Result<void, Error> {
+    const [type, amountStr, category, ...descParts] = args;
+
+    if (!type || !amountStr || !category) {
+      return Err(new Error('Usage: add <type> <amount> <category> [description]'));
+    }
+
+    const amount = parseFloat(amountStr);
+    if (isNaN(amount)) {
+      return Err(new Error('Amount must be a number'));
+    }
+
+    const input: TransactionInput = {
+      type: type as TransactionType,
+      amount,
+      category: category as Category,
+      description: descParts.join(' ') || undefined,
+    };
+
+    const result = service.createTransaction(input);
+    if (!result.ok) return Err(result.error);
+
+    renderer.renderTransaction(result.value);
+    return Ok(undefined);
+  }
+}
+
+class ListCommand implements Command {
+  execute({ service, renderer }: CommandContext): Result<void, Error> {
+    const transactions = service.getAllTransactions();
+    renderer.renderTransactionList(transactions);
+    return Ok(undefined);
+  }
+}
+
+class BalanceCommand implements Command {
+  execute({ service, renderer }: CommandContext): Result<void, Error> {
+    const transactions = service.getAllTransactions();
+    if (transactions.length === 0) {
+      console.log('No transactions to calculate.');
+      return Ok(undefined);
+    }
+
+    const balance = service.calculateBalance();
+    renderer.renderBalance(balance);
+    return Ok(undefined);
+  }
+}
+
+class DeleteCommand implements Command {
+  execute({ service, args }: CommandContext): Result<void, Error> {
+    if (args.length === 0) {
+      return Err(new Error('Usage: delete <id>'));
+    }
+
+    const id = parseInt(args[0], 10);
+    if (isNaN(id)) {
+      return Err(new Error(`"${args[0]}" is not a valid ID`));
+    }
+
+    const result = service.deleteTransaction(id);
+    if (!result.ok) return Err(result.error);
+
+    console.log(`✓ Deleted transaction #${id}`);
+    return Ok(undefined);
+  }
+}
+
+class UpdateCommand implements Command {
+  execute({ service, args }: CommandContext): Result<void, Error> {
+    if (args.length < 3) {
+      return Err(new Error('Usage: update <id> <field> <value>'));
+    }
+
+    const [idStr, field, ...valueParts] = args;
+    const id = parseInt(idStr, 10);
+
+    if (isNaN(id)) {
+      return Err(new Error(`"${idStr}" is not a valid ID`));
+    }
+
+    const value = valueParts.join(' ');
+    const updates: Partial<Omit<Transaction, 'id' | 'date'>> = {};
+
+    switch (field) {
+      case 'type':
+        updates.type = value as TransactionType;
+        break;
+      case 'amount':
+        const amount = parseFloat(value);
+        if (isNaN(amount)) {
+          return Err(new Error('Amount must be a number'));
+        }
+        updates.amount = amount;
+        break;
+      case 'category':
+        updates.category = value as Category;
+        break;
+      case 'description':
+        updates.description = value || undefined;
+        break;
+      default:
+        return Err(new Error(
+          `Unknown field "${field}". Valid: type, amount, category, description`
+        ));
+    }
+
+    const result = service.updateTransaction(id, updates);
+    if (!result.ok) return Err(result.error);
+
+    console.log(`✓ Updated transaction #${id}`);
+    return Ok(undefined);
+  }
+}
+
+class HelpCommand implements Command {
+  execute({ renderer }: CommandContext): Result<void, Error> {
+    renderer.renderHelp();
+    return Ok(undefined);
+  }
+}
+
+// ============================================================================
+// IoC Container
+// ============================================================================
+
+interface Container {
+  readonly service: FinanceService;
+  readonly storage: StorageAdapter;
+  readonly renderer: typeof ConsoleRenderer;
+  readonly commands: Record<CommandName, Command>;
+}
+
+function createContainer(filepath: string): Container {
+  const repository = new InMemoryFinanceRepository();
+  const service = new FinanceService(repository);
+  const storage = new JsonFileStorage(filepath);
+  const renderer = ConsoleRenderer;
+
+  const commands: Record<CommandName, Command> = {
+    add: new AddCommand(),
+    list: new ListCommand(),
+    balance: new BalanceCommand(),
+    delete: new DeleteCommand(),
+    update: new UpdateCommand(),
+    help: new HelpCommand(),
+  };
+
+  return { service, storage, renderer, commands };
+}
+
+// ============================================================================
+// Application Entry Point
+// ============================================================================
+
+class ApplicationError extends Error {
+  constructor(message: string, public readonly exitCode: number = 1) {
+    super(message);
+    this.name = 'ApplicationError';
+  }
+}
+
+async function main(): Promise<void> {
+  const container = createContainer(`${import.meta.dir}/finance.json`);
+
+  // Load data
+  try {
+    const data = await container.storage.load();
+    container.service.hydrate(data);
+  } catch (err) {
+    throw new ApplicationError(
+      `Failed to load data: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+
+  // Parse command
+  const [commandName, ...args] = process.argv.slice(2);
+
+  if (!commandName) {
+    container.renderer.renderHelp();
+    throw new ApplicationError('No command provided', 1);
+  }
+
+  const command = container.commands[commandName as CommandName];
+  if (!command) {
+    container.renderer.renderHelp();
+    throw new ApplicationError(`Unknown command: ${commandName}`, 1);
+  }
+
+  // Execute command
+  const result = command.execute({
+    service: container.service,
+    args,
+    renderer: container.renderer,
+  });
+
+  if (!result.ok) {
+    container.renderer.renderError(result.error);
+    throw new ApplicationError(result.error.message, 1);
+  }
+
+  // Save data
+  try {
+    await container.storage.save(container.service.getAllTransactions());
+  } catch (err) {
+    throw new ApplicationError(
+      `Failed to save data: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+}
+
+// Entry point with error handling
+try {
+  await main();
+  process.exit(0);
+} catch (err) {
+  if (err instanceof ApplicationError) {
+    process.exit(err.exitCode);
+  }
+  console.error('Unexpected error:', err);
+  process.exit(1);
+}
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  test:
+    name: Test & Coverage
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Run linter
+        run: bun run lint
+
+      - name: Run type check
+        run: bun run typecheck
+
+      - name: Run tests
+        run: bun test --coverage
+
+      - name: Check coverage threshold
+        run: |
+          COVERAGE=$(bun test --coverage --json | jq '.coverage.total.lines.pct')
+          THRESHOLD=90
+          
+          if (( $(echo "$COVERAGE < $THRESHOLD" | bc -l) )); then
+            echo "❌ Coverage $COVERAGE% is below threshold $THRESHOLD%"
+            exit 1
+          fi
+          
+          echo "✅ Coverage $COVERAGE% meets threshold $THRESHOLD%"
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage/coverage-final.json
+          fail_ci_if_error: true
+
+      - name: Comment coverage on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const coverage = JSON.parse(fs.readFileSync('./coverage/coverage-summary.json', 'utf8'));
+            const total = coverage.total;
+            
+            const body = `## 📊 Coverage Report
+            
+            | Metric | Coverage | Status |
+            |--------|----------|--------|
+            | Lines | ${total.lines.pct}% | ${total.lines.pct >= 90 ? '✅' : '❌'} |
+            | Statements | ${total.statements.pct}% | ${total.statements.pct >= 90 ? '✅' : '❌'} |
+            | Functions | ${total.functions.pct}% | ${total.functions.pct >= 90 ? '✅' : '❌'} |
+            | Branches | ${total.branches.pct}% | ${total.branches.pct >= 85 ? '✅' : '❌'} |
+            
+            **Threshold:** 90% for lines, statements, functions | 85% for branches
+            `;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+
+  benchmark:
+    name: Performance Benchmarks
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Run benchmarks
+        run: bun run bench
+
+      - name: Check performance regression
+        run: |
+          if [ -f "benchmark-baseline.json" ]; then
+            bun run scripts/check-regression.ts
+          else
+            echo "No baseline found, skipping regression check"
+          fi
+
+      - name: Comment benchmark results on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const results = JSON.parse(fs.readFileSync('./benchmark-results.json', 'utf8'));
+            
+            const formatTime = (ns) => {
+              if (ns < 1000) return `${ns.toFixed(2)}ns`;
+              if (ns < 1000000) return `${(ns/1000).toFixed(2)}μs`;
+              return `${(ns/1000000).toFixed(2)}ms`;
+            };
+            
+            let body = '## ⚡ Benchmark Results\n\n';
+            body += '| Operation | Time | Ops/sec |\n';
+            body += '|-----------|------|----------|\n';
+            
+            for (const [name, result] of Object.entries(results)) {
+              body += `| ${name} | ${formatTime(result.avg)} | ${result.opsPerSec.toLocaleString()} |\n`;
+            }
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Run security audit
+        run: bun audit
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  lint-commits:
+    name: Lint Commits
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install commitlint
+        run: npm install -g @commitlint/cli @commitlint/config-conventional
+
+      - name: Lint commits
+        run: |
+          npx commitlint --from ${{ github.event.pull_request.base.sha }} --to ${{ github.event.pull_request.head.sha }}
+import { describe, test, expect, beforeEach } from 'bun:test';
+
+// ============================================================================
+// Test Doubles
+// ============================================================================
+
+class InMemoryFinanceRepository {
+  private transactions = new Map<number, Transaction>();
+
+  add(transaction: Transaction): void {
+    this.transactions.set(transaction.id, transaction);
+  }
+
+  findById(id: number): Transaction | undefined {
+    return this.transactions.get(id);
+  }
+
+  findAll(): readonly Transaction[] {
+    return Array.from(this.transactions.values());
+  }
+
+  remove(id: number): boolean {
+    return this.transactions.delete(id);
+  }
+
+  update(id: number, transaction: Transaction): boolean {
+    if (!this.transactions.has(id)) return false;
+    this.transactions.set(id, transaction);
+    return true;
+  }
+
+  clear(): void {
+    this.transactions.clear();
+  }
+}
+
+class MockStorage {
+  private data: readonly Transaction[] = [];
+  public loadCalled = 0;
+  public saveCalled = 0;
+  public shouldFailOnLoad = false;
+  public shouldFailOnSave = false;
+
+  async load(): Promise<readonly Transaction[]> {
+    this.loadCalled++;
+    if (this.shouldFailOnLoad) {
+      throw new Error('Storage load failed');
+    }
+    return this.data;
+  }
+
+  async save(transactions: readonly Transaction[]): Promise<void> {
+    this.saveCalled++;
+    if (this.shouldFailOnSave) {
+      throw new Error('Storage save failed');
+    }
+    this.data = transactions;
+  }
+
+  getSavedData(): readonly Transaction[] {
+    return this.data;
+  }
+
+  setSeedData(data: readonly Transaction[]): void {
+    this.data = data;
+  }
+}
+
+class MockRenderer {
+  public rendered: unknown[] = [];
+
+  renderTransaction(transaction: Transaction): void {
+    this.rendered.push({ type: 'transaction', data: transaction });
+  }
+
+  renderTransactionList(transactions: readonly Transaction[]): void {
+    this.rendered.push({ type: 'list', data: transactions });
+  }
+
+  renderBalance(balance: { income: number; expense: number; total: number }): void {
+    this.rendered.push({ type: 'balance', data: balance });
+  }
+
+  renderError(error: Error): void {
+    this.rendered.push({ type: 'error', data: error });
+  }
+
+  renderHelp(): void {
+    this.rendered.push({ type: 'help' });
+  }
+
+  getLastRendered(): unknown {
+    return this.rendered[this.rendered.length - 1];
+  }
+
+  clear(): void {
+    this.rendered = [];
+  }
+}
+
+// ============================================================================
+// Copy necessary types and classes from main file
+// ============================================================================
+
+const TRANSACTION_TYPES = ['income', 'expense'] as const;
+const CATEGORIES = ['food', 'transport', 'entertainment', 'salary', 'other'] as const;
+
+type TransactionType = typeof TRANSACTION_TYPES[number];
+type Category = typeof CATEGORIES[number];
+
+type Result<T, E = Error> = 
+  | { ok: true; value: T }
+  | { ok: false; error: E };
+
+const Ok = <T>(value: T): Result<T> => ({ ok: true, value });
+const Err = <T, E = Error>(error: E): Result<T, E> => ({ ok: false, error });
+
+class DomainError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = this.constructor.name;
+  }
+}
+
+class ValidationError extends DomainError {}
+class NotFoundError extends DomainError {}
+
+interface Transaction {
+  readonly id: number;
+  readonly date: string;
+  readonly type: TransactionType;
+  readonly amount: number;
+  readonly category: Category;
+  readonly description?: string;
+}
+
+interface TransactionInput {
+  readonly type: TransactionType;
+  readonly amount: number;
+  readonly category: Category;
+  readonly description?: string;
+}
+
+class TransactionValidator {
+  static validate(input: TransactionInput): Result<TransactionInput, ValidationError> {
+    if (!TRANSACTION_TYPES.includes(input.type)) {
+      return Err(new ValidationError(
+        `Invalid type "${input.type}". Valid: ${TRANSACTION_TYPES.join(', ')}`
+      ));
+    }
+
+    if (!CATEGORIES.includes(input.category)) {
+      return Err(new ValidationError(
+        `Invalid category "${input.category}". Valid: ${CATEGORIES.join(', ')}`
+      ));
+    }
+
+    if (input.amount <= 0) {
+      return Err(new ValidationError('Amount must be positive'));
+    }
+
+    if (!Number.isFinite(input.amount)) {
+      return Err(new ValidationError('Amount must be a finite number'));
+    }
+
+    return Ok(input);
+  }
+
+  static validatePartialUpdate(
+    updates: Partial<Omit<Transaction, 'id' | 'date'>>
+  ): Result<Partial<Omit<Transaction, 'id' | 'date'>>, ValidationError> {
+    if (updates.type && !TRANSACTION_TYPES.includes(updates.type)) {
+      return Err(new ValidationError(
+        `Invalid type "${updates.type}". Valid: ${TRANSACTION_TYPES.join(', ')}`
+      ));
+    }
+
+    if (updates.category && !CATEGORIES.includes(updates.category)) {
+      return Err(new ValidationError(
+        `Invalid category "${updates.category}". Valid: ${CATEGORIES.join(', ')}`
+      ));
+    }
+
+    if (updates.amount !== undefined) {
+      if (updates.amount <= 0) {
+        return Err(new ValidationError('Amount must be positive'));
+      }
+      if (!Number.isFinite(updates.amount)) {
+        return Err(new ValidationError('Amount must be a finite number'));
+      }
+    }
+
+    return Ok(updates);
+  }
+}
+
+interface FinanceRepository {
+  add(transaction: Transaction): void;
+  findById(id: number): Transaction | undefined;
+  findAll(): readonly Transaction[];
+  remove(id: number): boolean;
+  update(id: number, transaction: Transaction): boolean;
+}
+
+class FinanceService {
+  private nextId = 1;
+
+  constructor(private readonly repository: FinanceRepository) {}
+
+  createTransaction(input: TransactionInput): Result<Transaction, DomainError> {
+    const validationResult = TransactionValidator.validate(input);
+    if (!validationResult.ok) return validationResult;
+
+    const transaction: Transaction = {
+      id: this.nextId++,
+      date: new Date().toISOString(),
+      ...validationResult.value,
+    };
+
+    this.repository.add(transaction);
+    return Ok(transaction);
+  }
+
+  getTransaction(id: number): Result<Transaction, NotFoundError> {
+    const transaction = this.repository.findById(id);
+    return transaction
+      ? Ok(transaction)
+      : Err(new NotFoundError(`Transaction #${id} not found`));
+  }
+
+  getAllTransactions(): readonly Transaction[] {
+    return this.repository.findAll();
+  }
+
+  deleteTransaction(id: number): Result<void, NotFoundError> {
+    const exists = this.repository.findById(id);
+    if (!exists) {
+      return Err(new NotFoundError(`Transaction #${id} not found`));
+    }
+
+    this.repository.remove(id);
+    return Ok(undefined);
+  }
+
+  updateTransaction(
+    id: number,
+    updates: Partial<Omit<Transaction, 'id' | 'date'>>
+  ): Result<Transaction, DomainError> {
+    const existingResult = this.getTransaction(id);
+    if (!existingResult.ok) return existingResult;
+
+    const validationResult = TransactionValidator.validatePartialUpdate(updates);
+    if (!validationResult.ok) return validationResult;
+
+    const updated: Transaction = { ...existingResult.value, ...validationResult.value };
+    this.repository.update(id, updated);
+    return Ok(updated);
+  }
+
+  calculateBalance(): { income: number; expense: number; total: number } {
+    const transactions = this.repository.findAll();
+    const income = transactions
+      .filter((t) => t.type === 'income')
+      .reduce((sum, t) => sum + t.amount, 0);
+    const expense = transactions
+      .filter((t) => t.type === 'expense')
+      .reduce((sum, t) => sum + t.amount, 0);
+    return { income, expense, total: income - expense };
+  }
+
+  hydrate(transactions: readonly Transaction[]): void {
+    const maxId = transactions.reduce((max, t) => Math.max(max, t.id), 0);
+    this.nextId = maxId + 1;
+    transactions.forEach((t) => this.repository.add(t));
+  }
+}
+
+// ============================================================================
+// Unit Tests - Domain Layer
+// ============================================================================
+
+describe('TransactionValidator', () => {
+  test('validates correct input', () => {
+    const input: TransactionInput = {
+      type: 'income',
+      amount: 100,
+      category: 'salary',
+      description: 'Test',
+    };
+
+    const result = TransactionValidator.validate(input);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value).toEqual(input);
+    }
+  });
+
+  test('rejects invalid type', () => {
+    const input = {
+      type: 'invalid' as TransactionType,
+      amount: 100,
+      category: 'salary' as Category,
+    };
+
+    const result = TransactionValidator.validate(input);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toBeInstanceOf(ValidationError);
+      expect(result.error.message).toContain('Invalid type');
+    }
+  });
+
+  test('rejects invalid category', () => {
+    const input = {
+      type: 'income' as TransactionType,
+      amount: 100,
+      category: 'invalid' as Category,
+    };
+
+    const result = TransactionValidator.validate(input);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toBeInstanceOf(ValidationError);
+      expect(result.error.message).toContain('Invalid category');
+    }
+  });
+
+  test('rejects negative amount', () => {
+    const input: TransactionInput = {
+      type: 'income',
+      amount: -100,
+      category: 'salary',
+    };
+
+    const result = TransactionValidator.validate(input);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toContain('positive');
+    }
+  });
+
+  test('rejects zero amount', () => {
+    const input: TransactionInput = {
+      type: 'income',
+      amount: 0,
+      category: 'salary',
+    };
+
+    const result = TransactionValidator.validate(input);
+    expect(result.ok).toBe(false);
+  });
+
+  test('rejects infinite amount', () => {
+    const input: TransactionInput = {
+      type: 'income',
+      amount: Infinity,
+      category: 'salary',
+    };
+
+    const result = TransactionValidator.validate(input);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toContain('finite');
+    }
+  });
+
+  test('rejects NaN amount', () => {
+    const input: TransactionInput = {
+      type: 'income',
+      amount: NaN,
+      category: 'salary',
+    };
+
+    const result = TransactionValidator.validate(input);
+    expect(result.ok).toBe(false);
+  });
+});
+
+describe('FinanceService', () => {
+  let repository: InMemoryFinanceRepository;
+  let service: FinanceService;
+
+  beforeEach(() => {
+    repository = new InMemoryFinanceRepository();
+    service = new FinanceService(repository);
+  });
+
+  describe('createTransaction', () => {
+    test('creates transaction with valid input', () => {
+      const input: TransactionInput = {
+        type: 'income',
+        amount: 1000,
+        category: 'salary',
+        description: 'Monthly salary',
+      };
+
+      const result = service.createTransaction(input);
+      expect(result.ok).toBe(true);
+
+      if (result.ok) {
+        expect(result.value.id).toBe(1);
+        expect(result.value.type).toBe('income');
+        expect(result.value.amount).toBe(1000);
+        expect(result.value.category).toBe('salary');
+        expect(result.value.description).toBe('Monthly salary');
+        expect(result.value.date).toBeDefined();
+      }
+    });
+
+    test('increments ID for each transaction', () => {
+      const input: TransactionInput = {
+        type: 'income',
+        amount: 100,
+        category: 'salary',
+      };
+
+      const result1 = service.createTransaction(input);
+      const result2 = service.createTransaction(input);
+
+      expect(result1.ok && result1.value.id).toBe(1);
+      expect(result2.ok && result2.value.id).toBe(2);
+    });
+
+    test('returns error for invalid input', () => {
+      const input = {
+        type: 'invalid' as TransactionType,
+        amount: 100,
+        category: 'salary' as Category,
+      };
+
+      const result = service.createTransaction(input);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toBeInstanceOf(ValidationError);
+      }
+    });
+  });
+
+  describe('getTransaction', () => {
+    test('returns transaction by id', () => {
+      const input: TransactionInput = {
+        type: 'income',
+        amount: 100,
+        category: 'salary',
+      };
+
+      const created = service.createTransaction(input);
+      expect(created.ok).toBe(true);
+
+      if (created.ok) {
+        const result = service.getTransaction(created.value.id);
+        expect(result.ok).toBe(true);
+        if (result.ok) {
+          expect(result.value.id).toBe(created.value.id);
+        }
+      }
+    });
+
+    test('returns error for non-existent id', () => {
+      const result = service.getTransaction(999);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toBeInstanceOf(NotFoundError);
+        expect(result.error.message).toContain('999');
+      }
+    });
+  });
+
+  describe('deleteTransaction', () => {
+    test('deletes existing transaction', () => {
+      const input: TransactionInput = {
+        type: 'income',
+        amount: 100,
+        category: 'salary',
+      };
+
+      const created = service.createTransaction(input);
+      expect(created.ok).toBe(true);
+
+      if (created.ok) {
+        const result = service.deleteTransaction(created.value.id);
+        expect(result.ok).toBe(true);
+
+        const getResult = service.getTransaction(created.value.id);
+        expect(getResult.ok).toBe(false);
+      }
+    });
+
+    test('returns error for non-existent transaction', () => {
+      const result = service.deleteTransaction(999);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toBeInstanceOf(NotFoundError);
+      }
+    });
+  });
+
+  describe('updateTransaction', () => {
+    test('updates transaction fields', () => {
+      const input: TransactionInput = {
+        type: 'income',
+        amount: 100,
+        category: 'salary',
+      };
+
+      const created = service.createTransaction(input);
+      expect(created.ok).toBe(true);
+
+      if (created.ok) {
+        const result = service.updateTransaction(created.value.id, {
+          amount: 200,
+          description: 'Updated',
+        });
+
+        expect(result.ok).toBe(true);
+        if (result.ok) {
+          expect(result.value.amount).toBe(200);
+          expect(result.value.description).toBe('Updated');
+          expect(result.value.type).toBe('income'); // unchanged
+        }
+      }
+    });
+
+    test('validates updated fields', () => {
+      const input: TransactionInput = {
+        type: 'income',
+        amount: 100,
+        category: 'salary',
+      };
+
+      const created = service.createTransaction(input);
+      expect(created.ok).toBe(true);
+
+      if (created.ok) {
+        const result = service.updateTransaction(created.value.id, {
+          amount: -100,
+        });
+
+        expect(result.ok).toBe(false);
+        if (!result.ok) {
+          expect(result.error).toBeInstanceOf(ValidationError);
+        }
+      }
+    });
+
+    test('returns error for non-existent transaction', () => {
+      const result = service.updateTransaction(999, { amount: 100 });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toBeInstanceOf(NotFoundError);
+      }
+    });
+  });
+
+  describe('calculateBalance', () => {
+    test('calculates balance correctly', () => {
+      service.createTransaction({
+        type: 'income',
+        amount: 1000,
+        category: 'salary',
+      });
+
+      service.createTransaction({
+        type: 'expense',
+        amount: 200,
+        category: 'food',
+      });
+
+      service.createTransaction({
+        type: 'expense',
+        amount: 100,
+        category: 'transport',
+      });
+
+      const balance = service.calculateBalance();
+      expect(balance.income).toBe(1000);
+      expect(balance.expense).toBe(300);
+      expect(balance.total).toBe(700);
+    });
+
+    test('returns zero for empty transactions', () => {
+      const balance = service.calculateBalance();
+      expect(balance.income).toBe(0);
+      expect(balance.expense).toBe(0);
+      expect(balance.total).toBe(0);
+    });
+  });
+
+  describe('hydrate', () => {
+    test('restores transactions and sets correct next ID', () => {
+      const existingTransactions: Transaction[] = [
+        {
+          id: 5,
+          date: '2024-01-01T00:00:00.000Z',
+          type: 'income',
+          amount: 100,
+          category: 'salary',
+        },
+        {
+          id: 10,
+          date: '2024-01-02T00:00:00.000Z',
+          type: 'expense',
+          amount: 50,
+          category: 'food',
+        },
+      ];
+
+      service.hydrate(existingTransactions);
+
+      expect(service.getAllTransactions().length).toBe(2);
+
+      const newTransaction = service.createTransaction({
+        type: 'income',
+        amount: 200,
+        category: 'salary',
+      });
+
+      expect(newTransaction.ok && newTransaction.value.id).toBe(11);
+    });
+  });
+});
+
+// ============================================================================
+// Integration Tests
+// ============================================================================
+
+describe('Integration Tests', () => {
+  let storage: MockStorage;
+  let repository: InMemoryFinanceRepository;
+  let service: FinanceService;
+
+  beforeEach(() => {
+    storage = new MockStorage();
+    repository = new InMemoryFinanceRepository();
+    service = new FinanceService(repository);
+  });
+
+  test('full workflow: create, update, delete', () => {
+    // Create
+    const createResult = service.createTransaction({
+      type: 'income',
+      amount: 1000,
+      category: 'salary',
+      description: 'Initial',
+    });
+    expect(createResult.ok).toBe(true);
+
+    if (!createResult.ok) return;
+    const transactionId = createResult.value.id;
+
+    // Read
+    const getResult = service.getTransaction(transactionId);
+    expect(getResult.ok).toBe(true);
+
+    // Update
+    const updateResult = service.updateTransaction(transactionId, {
+      description: 'Updated',
+    });
+    expect(updateResult.ok).toBe(true);
+
+    // Verify update
+    const verifyResult = service.getTransaction(transactionId);
+    expect(verifyResult.ok && verifyResult.value.description).toBe('Updated');
+
+    // Delete
+    const deleteResult = service.deleteTransaction(transactionId);
+    expect(deleteResult.ok).toBe(true);
+
+    // Verify deletion
+    const finalResult = service.getTransaction(transactionId);
+    expect(finalResult.ok).toBe(false);
+  });
+
+  test('persistence workflow', async () => {
+    // Create transactions
+    service.createTransaction({
+      type: 'income',
+      amount: 1000,
+      category: 'salary',
+    });
+
+    service.createTransaction({
+      type: 'expense',
+      amount: 200,
+      category: 'food',
+    });
+
+    // Save
+    const transactions = service.getAllTransactions();
+    await storage.save(transactions);
+    expect(storage.saveCalled).toBe(1);
+
+    // Load into new service
+    const newRepository = new InMemoryFinanceRepository();
+    const newService = new FinanceService(newRepository);
+    const loadedData = await storage.load();
+    newService.hydrate(loadedData);
+
+    // Verify data persisted
+    expect(newService.getAllTransactions().length).toBe(2);
+
+    const balance = newService.calculateBalance();
+    expect(balance.total).toBe(800);
+  });
+
+  test('handles storage failures gracefully', async () => {
+    storage.shouldFailOnLoad = true;
+
+    try {
+      await storage.load();
+      expect(true).toBe(false); // Should not reach here
+    } catch (err) {
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toContain('failed');
+    }
+  });
+});
+import { bench, describe } from 'bun:test';
+
+// ============================================================================
+// Setup
+// ============================================================================
+
+class InMemoryFinanceRepository {
+  private transactions = new Map<number, Transaction>();
+
+  add(transaction: Transaction): void {
+    this.transactions.set(transaction.id, transaction);
+  }
+
+  findById(id: number): Transaction | undefined {
+    return this.transactions.get(id);
+  }
+
+  findAll(): readonly Transaction[] {
+    return Array.from(this.transactions.values());
+  }
+
+  remove(id: number): boolean {
+    return this.transactions.delete(id);
+  }
+
+  update(id: number, transaction: Transaction): boolean {
+    if (!this.transactions.has(id)) return false;
+    this.transactions.set(id, transaction);
+    return true;
+  }
+
+  clear(): void {
+    this.transactions.clear();
+  }
+}
+
+const TRANSACTION_TYPES = ['income', 'expense'] as const;
+const CATEGORIES = ['food', 'transport', 'entertainment', 'salary', 'other'] as const;
+
+type TransactionType = typeof TRANSACTION_TYPES[number];
+type Category = typeof CATEGORIES[number];
+
+type Result<T, E = Error> = 
+  | { ok: true; value: T }
+  | { ok: false; error: E };
+
+const Ok = <T>(value: T): Result<T> => ({ ok: true, value });
+const Err = <T, E = Error>(error: E): Result<T, E> => ({ ok: false, error });
+
+class DomainError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = this.constructor.name;
+  }
+}
+
+class ValidationError extends DomainError {}
+class NotFoundError extends DomainError {}
+
+interface Transaction {
+  readonly id: number;
+  readonly date: string;
+  readonly type: TransactionType;
+  readonly amount: number;
+  readonly category: Category;
+  readonly description?: string;
+}
+
+interface TransactionInput {
+  readonly type: TransactionType;
+  readonly amount: number;
+  readonly category: Category;
+  readonly description?: string;
+}
+
+class TransactionValidator {
+  static validate(input: TransactionInput): Result<TransactionInput, ValidationError> {
+    if (!TRANSACTION_TYPES.includes(input.type)) {
+      return Err(new ValidationError(`Invalid type "${input.type}"`));
+    }
+
+    if (!CATEGORIES.includes(input.category)) {
+      return Err(new ValidationError(`Invalid category "${input.category}"`));
+    }
+
+    if (input.amount <= 0 || !Number.isFinite(input.amount)) {
+      return Err(new ValidationError('Invalid amount'));
+    }
+
+    return Ok(input);
+  }
+}
+
+interface FinanceRepository {
+  add(transaction: Transaction): void;
+  findById(id: number): Transaction | undefined;
+  findAll(): readonly Transaction[];
+  remove(id: number): boolean;
+  update(id: number, transaction: Transaction): boolean;
+}
+
+class FinanceService {
+  private nextId = 1;
+
+  constructor(private readonly repository: FinanceRepository) {}
+
+  createTransaction(input: TransactionInput): Result<Transaction, DomainError> {
+    const validationResult = TransactionValidator.validate(input);
+    if (!validationResult.ok) return validationResult;
+
+    const transaction: Transaction = {
+      id: this.nextId++,
+      date: new Date().toISOString(),
+      ...validationResult.value,
+    };
+
+    this.repository.add(transaction);
+    return Ok(transaction);
+  }
+
+  getTransaction(id: number): Result<Transaction, NotFoundError> {
+    const transaction = this.repository.findById(id);
+    return transaction
+      ? Ok(transaction)
+      : Err(new NotFoundError(`Transaction #${id} not found`));
+  }
+
+  getAllTransactions(): readonly Transaction[] {
+    return this.repository.findAll();
+  }
+
+  deleteTransaction(id: number): Result<void, NotFoundError> {
+    const exists = this.repository.findById(id);
+    if (!exists) {
+      return Err(new NotFoundError(`Transaction #${id} not found`));
+    }
+
+    this.repository.remove(id);
+    return Ok(undefined);
+  }
+
+  calculateBalance(): { income: number; expense: number; total: number } {
+    const transactions = this.repository.findAll();
+    const income = transactions
+      .filter((t) => t.type === 'income')
+      .reduce((sum, t) => sum + t.amount, 0);
+    const expense = transactions
+      .filter((t) => t.type === 'expense')
+      .reduce((sum, t) => sum + t.amount, 0);
+    return { income, expense, total: income - expense };
+  }
+}
+
+// ============================================================================
+// Benchmark Helpers
+// ============================================================================
+
+function generateTransaction(id: number): TransactionInput {
+  return {
+    type: id % 2 === 0 ? 'income' : 'expense',
+    amount: Math.random() * 1000,
+    category: CATEGORIES[id % CATEGORIES.length],
+    description: `Transaction ${id}`,
+  };
+}
+
+function setupService(count: number): FinanceService {
+  const repository = new InMemoryFinanceRepository();
+  const service = new FinanceService(repository);
+  
+  for (let i = 0; i < count; i++) {
+    service.createTransaction(generateTransaction(i));
+  }
+  
+  return service;
+}
+
+// ============================================================================
+// Benchmarks
+// ============================================================================
+
+describe('Transaction Creation', () => {
+  bench('create single transaction', () => {
+    const repository = new InMemoryFinanceRepository();
+    const service = new FinanceService(repository);
+    
+    service.createTransaction({
+      type: 'income',
+      amount: 1000,
+      category: 'salary',
+      description: 'Test',
+    });
+  });
+
+  bench('create 100 transactions', () => {
+    const repository = new InMemoryFinanceRepository();
+    const service = new FinanceService(repository);
+    
+    for (let i = 0; i < 100; i++) {
+      service.createTransaction(generateTransaction(i));
+    }
+  });
+
+  bench('create 1000 transactions', () => {
+    const repository = new InMemoryFinanceRepository();
+    const service = new FinanceService(repository);
+    
+    for (let i = 0; i < 1000; i++) {
+      service.createTransaction(generateTransaction(i));
+    }
+  });
+});
+
+describe('Transaction Retrieval', () => {
+  bench('findById (10 items)', () => {
+    const service = setupService(10);
+    service.getTransaction(5);
+  });
+
+  bench('findById (100 items)', () => {
+    const service = setupService(100);
+    service.getTransaction(50);
+  });
+
+  bench('findById (1000 items)', () => {
+    const service = setupService(1000);
+    service.getTransaction(500);
+  });
+
+  bench('getAll (10 items)', () => {
+    const service = setupService(10);
+    service.getAllTransactions();
+  });
+
+  bench('getAll (100 items)', () => {
+    const service = setupService(100);
+    service.getAllTransactions();
+  });
+
+  bench('getAll (1000 items)', () => {
+    const service = setupService(1000);
+    service.getAllTransactions();
+  });
+});
+
+describe('Balance Calculation', () => {
+  bench('calculate balance (10 items)', () => {
+    const service = setupService(10);
+    service.calculateBalance();
+  });
+
+  bench('calculate balance (100 items)', () => {
+    const service = setupService(100);
+    service.calculateBalance();
+  });
+
+  bench('calculate balance (1000 items)', () => {
+    const service = setupService(1000);
+    service.calculateBalance();
+  });
+
+  bench('calculate balance (10000 items)', () => {
+    const service = setupService(10000);
+    service.calculateBalance();
+  });
+});
+
+describe('Validation', () => {
+  bench('validate valid input', () => {
+    TransactionValidator.validate({
+      type: 'income',
+      amount: 1000,
+      category: 'salary',
+      description: 'Test',
+    });
+  });
+
+  bench('validate invalid type', () => {
+    TransactionValidator.validate({
+      type: 'invalid' as TransactionType,
+      amount: 1000,
+      category: 'salary',
+    });
+  });
+
+  bench('validate invalid amount', () => {
+    TransactionValidator.validate({
+      type: 'income',
+      amount: -1000,
+      category: 'salary',
+    });
+  });
+});
+
+describe('CRUD Operations', () => {
+  bench('full CRUD cycle', () => {
+    const repository = new InMemoryFinanceRepository();
+    const service = new FinanceService(repository);
+    
+    // Create
+    const result = service.createTransaction({
+      type: 'income',
+      amount: 1000,
+      category: 'salary',
+    });
+    
+    if (!result.ok) return;
+    const id = result.value.id;
+    
+    // Read
+    service.getTransaction(id);
+    
+    // Update
+    const transaction = service.getTransaction(id);
+    if (transaction.ok) {
+      repository.update(id, { ...transaction.value, amount: 2000 });
+    }
+    
+    // Delete
+    service.deleteTransaction(id);
+  });
+
+  bench('bulk operations (100 items)', () => {
+    const repository = new InMemoryFinanceRepository();
+    const service = new FinanceService(repository);
+    
+    // Bulk create
+    for (let i = 0; i < 100; i++) {
+      service.createTransaction(generateTransaction(i));
+    }
+    
+    // Bulk read
+    service.getAllTransactions();
+    
+    // Bulk delete
+    for (let i = 1; i <= 100; i++) {
+      service.deleteTransaction(i);
+    }
+  });
+});
+
+describe('Repository Operations', () => {
+  bench('Map.set (add)', () => {
+    const repository = new InMemoryFinanceRepository();
+    const transaction: Transaction = {
+      id: 1,
+      date: new Date().toISOString(),
+      type: 'income',
+      amount: 1000,
+      category: 'salary',
+    };
+    repository.add(transaction);
+  });
+
+  bench('Map.get (find)', () => {
+    const repository = new InMemoryFinanceRepository();
+    repository.add({
+      id: 1,
+      date: new Date().toISOString(),
+      type: 'income',
+      amount: 1000,
+      category: 'salary',
+    });
+    repository.findById(1);
+  });
+
+  bench('Map.delete (remove)', () => {
+    const repository = new InMemoryFinanceRepository();
+    repository.add({
+      id: 1,
+      date: new Date().toISOString(),
+      type: 'income',
+      amount: 1000,
+      category: 'salary',
+    });
+    repository.remove(1);
+  });
+
+  bench('Map.values + Array.from (getAll)', () => {
+    const repository = new InMemoryFinanceRepository();
+    for (let i = 0; i < 100; i++) {
+      repository.add({
+        id: i,
+        date: new Date().toISOString(),
+        type: 'income',
+        amount: 1000,
+        category: 'salary',
+      });
+    }
+    repository.findAll();
+  });
+});
+
+describe('Memory Efficiency', () => {
+  bench('memory: 1000 transactions', () => {
+    const service = setupService(1000);
+    const transactions = service.getAllTransactions();
+    // Force evaluation
+    transactions.length;
+  });
+
+  bench('memory: 10000 transactions', () => {
+    const service = setupService(10000);
+    const transactions = service.getAllTransactions();
+    transactions.length;
+  });
+});
+
+// ============================================================================
+// Performance Regression Detection
+// ============================================================================
+
+interface BenchmarkResult {
+  name: string;
+  avgTime: number;
+  opsPerSec: number;
+  samples: number;
+}
+
+interface RegressionReport {
+  passing: BenchmarkResult[];
+  failing: BenchmarkResult[];
+  threshold: number;
+}
+
+export function checkRegression(
+  current: BenchmarkResult[],
+  baseline: BenchmarkResult[],
+  threshold: number = 1.1 // 10% slowdown allowed
+): RegressionReport {
+  const passing: BenchmarkResult[] = [];
+  const failing: BenchmarkResult[] = [];
+
+  const baselineMap = new Map(baseline.map(b => [b.name, b]));
+
+  for (const curr of current) {
+    const base = baselineMap.get(curr.name);
+    
+    if (!base) {
+      passing.push(curr); // New benchmark, assume OK
+      continue;
+    }
+
+    const ratio = curr.avgTime / base.avgTime;
+    
+    if (ratio > threshold) {
+      failing.push(curr);
+    } else {
+      passing.push(curr);
+    }
+  }
+
+  return { passing, failing, threshold };
+}
+#!/usr/bin/env bun
+
+interface BenchmarkResult {
+  name: string;
+  avgTime: number; // nanoseconds
+  opsPerSec: number;
+  samples: number;
+}
+
+interface RegressionConfig {
+  threshold: number; // e.g., 1.1 = 10% slowdown allowed
+  critical: number; // e.g., 1.5 = 50% slowdown = critical
+}
+
+interface RegressionReport {
+  passing: Array<{ name: string; ratio: number }>;
+  warnings: Array<{ name: string; ratio: number; baseline: number; current: number }>;
+  failures: Array<{ name: string; ratio: number; baseline: number; current: number }>;
+  summary: {
+    total: number;
+    passed: number;
+    warned: number;
+    failed: number;
+  };
+}
+
+const CONFIG: RegressionConfig = {
+  threshold: 1.1, // 10% slowdown warning
+  critical: 1.5, // 50% slowdown failure
+};
+
+function formatTime(ns: number): string {
+  if (ns < 1000) return `${ns.toFixed(2)}ns`;
+  if (ns < 1_000_000) return `${(ns / 1000).toFixed(2)}μs`;
+  if (ns < 1_000_000_000) return `${(ns / 1_000_000).toFixed(2)}ms`;
+  return `${(ns / 1_000_000_000).toFixed(2)}s`;
+}
+
+function formatOps(opsPerSec: number): string {
+  if (opsPerSec < 1000) return `${opsPerSec.toFixed(0)} ops/sec`;
+  if (opsPerSec < 1_000_000) return `${(opsPerSec / 1000).toFixed(1)}K ops/sec`;
+  return `${(opsPerSec / 1_000_000).toFixed(1)}M ops/sec`;
+}
+
+function checkRegression(
+  current: BenchmarkResult[],
+  baseline: BenchmarkResult[],
+  config: RegressionConfig
+): RegressionReport {
+  const passing: Array<{ name: string; ratio: number }> = [];
+  const warnings: Array<{ name: string; ratio: number; baseline: number; current: number }> = [];
+  const failures: Array<{ name: string; ratio: number; baseline: number; current: number }> = [];
+
+  const baselineMap = new Map(baseline.map((b) => [b.name, b]));
+
+  for (const curr of current) {
+    const base = baselineMap.get(curr.name);
+
+    if (!base) {
+      // New benchmark, no baseline to compare
+      passing.push({ name: curr.name, ratio: 1.0 });
+      continue;
+    }
+
+    const ratio = curr.avgTime / base.avgTime;
+
+    if (ratio >= config.critical) {
+      failures.push({
+        name: curr.name,
+        ratio,
+        baseline: base.avgTime,
+        current: curr.avgTime,
+      });
+    } else if (ratio >= config.threshold) {
+      warnings.push({
+        name: curr.name,
+        ratio,
+        baseline: base.avgTime,
+        current: curr.avgTime,
+      });
+    } else {
+      passing.push({ name: curr.name, ratio });
+    }
+  }
+
+  return {
+    passing,
+    warnings,
+    failures,
+    summary: {
+      total: current.length,
+      passed: passing.length,
+      warned: warnings.length,
+      failed: failures.length,
+    },
+  };
+}
+
+function printReport(report: RegressionReport): void {
+  console.log('');
+  console.log('═'.repeat(80));
+  console.log('📊 Performance Regression Report');
+  console.log('═'.repeat(80));
+  console.log('');
+
+  // Summary
+  const { summary } = report;
+  console.log('Summary:');
+  console.log(`  Total benchmarks: ${summary.total}`);
+  console.log(`  ✅ Passed: ${summary.passed}`);
+  console.log(`  ⚠️  Warnings: ${summary.warned}`);
+  console.log(`  ❌ Failed: ${summary.failed}`);
+  console.log('');
+
+  // Warnings
+  if (report.warnings.length > 0) {
+    console.log('⚠️  Performance Warnings (>10% slower):');
+    console.log('─'.repeat(80));
+    for (const w of report.warnings) {
+      const pctChange = ((w.ratio - 1) * 100).toFixed(1);
+      console.log(`  ${w.name}`);
+      console.log(`    Baseline: ${formatTime(w.baseline)}`);
+      console.log(`    Current:  ${formatTime(w.current)}`);
+      console.log(`    Change:   +${pctChange}% slower`);
+      console.log('');
+    }
+  }
+
+  // Failures
+  if (report.failures.length > 0) {
+    console.log('❌ Performance Failures (>50% slower):');
+    console.log('─'.repeat(80));
+    for (const f of report.failures) {
+      const pctChange = ((f.ratio - 1) * 100).toFixed(1);
+      console.log(`  ${f.name}`);
+      console.log(`    Baseline: ${formatTime(f.baseline)}`);
+      console.log(`    Current:  ${formatTime(f.current)}`);
+      console.log(`    Change:   +${pctChange}% slower ⚠️  CRITICAL`);
+      console.log('');
+    }
+  }
+
+  // Improvements (if any)
+  const improvements = report.passing.filter((p) => p.ratio < 0.9);
+  if (improvements.length > 0) {
+    console.log('🚀 Performance Improvements (>10% faster):');
+    console.log('─'.repeat(80));
+    for (const imp of improvements) {
+      const pctChange = ((1 - imp.ratio) * 100).toFixed(1);
+      console.log(`  ${imp.name}: ${pctChange}% faster`);
+    }
+    console.log('');
+  }
+
+  console.log('═'.repeat(80));
+}
+
+function generateMarkdownReport(report: RegressionReport): string {
+  let md = '## ⚡ Performance Regression Report\n\n';
+
+  // Summary table
+  md += '### Summary\n\n';
+  md += '| Status | Count |\n';
+  md += '|--------|-------|\n';
+  md += `| ✅ Passed | ${report.summary.passed} |\n`;
+  md += `| ⚠️ Warnings | ${report.summary.warned} |\n`;
+  md += `| ❌ Failed | ${report.summary.failed} |\n`;
+  md += `| **Total** | **${report.summary.total}** |\n\n`;
+
+  // Warnings
+  if (report.warnings.length > 0) {
+    md += '### ⚠️ Performance Warnings\n\n';
+    md += '| Benchmark | Baseline | Current | Change |\n';
+    md += '|-----------|----------|---------|--------|\n';
+    for (const w of report.warnings) {
+      const pctChange = ((w.ratio - 1) * 100).toFixed(1);
+      md += `| ${w.name} | ${formatTime(w.baseline)} | ${formatTime(w.current)} | +${pctChange}% |\n`;
+    }
+    md += '\n';
+  }
+
+  // Failures
+  if (report.failures.length > 0) {
+    md += '### ❌ Performance Failures\n\n';
+    md += '| Benchmark | Baseline | Current | Change |\n';
+    md += '|-----------|----------|---------|--------|\n';
+    for (const f of report.failures) {
+      const pctChange = ((f.ratio - 1) * 100).toFixed(1);
+      md += `| ${f.name} | ${formatTime(f.baseline)} | ${formatTime(f.current)} | **+${pctChange}%** 🚨 |\n`;
+    }
+    md += '\n';
+  }
+
+  // Improvements
+  const improvements = report.passing.filter((p) => p.ratio < 0.9);
+  if (improvements.length > 0) {
+    md += '### 🚀 Performance Improvements\n\n';
+    for (const imp of improvements) {
+      const pctChange = ((1 - imp.ratio) * 100).toFixed(1);
+      md += `- **${imp.name}**: ${pctChange}% faster\n`;
+    }
+    md += '\n';
+  }
+
+  return md;
+}
+
+async function main(): Promise<void> {
+  const baselinePath = './benchmark-baseline.json';
+  const currentPath = './benchmark-results.json';
+
+  // Load baseline
+  let baseline: BenchmarkResult[];
+  try {
+    const baselineFile = Bun.file(baselinePath);
+    if (!(await baselineFile.exists())) {
+      console.error(`❌ Baseline file not found: ${baselinePath}`);
+      console.log('💡 Run benchmarks first and save results as baseline:');
+      console.log('   bun run bench > benchmark-results.json');
+      console.log('   cp benchmark-results.json benchmark-baseline.json');
+      process.exit(1);
+    }
+    baseline = await baselineFile.json();
+  } catch (err) {
+    console.error(`❌ Failed to load baseline: ${err instanceof Error ? err.message : err}`);
+    process.exit(1);
+  }
+
+  // Load current results
+  let current: BenchmarkResult[];
+  try {
+    const currentFile = Bun.file(currentPath);
+    if (!(await currentFile.exists())) {
+      console.error(`❌ Current results file not found: ${currentPath}`);
+      console.log('💡 Run benchmarks first:');
+      console.log('   bun run bench > benchmark-results.json');
+      process.exit(1);
+    }
+    current = await currentFile.json();
+  } catch (err) {
+    console.error(`❌ Failed to load current results: ${err instanceof Error ? err.message : err}`);
+    process.exit(1);
+  }
+
+  // Check regression
+  const report = checkRegression(current, baseline, CONFIG);
+
+  // Print console report
+  printReport(report);
+
+  // Generate markdown for GitHub Actions
+  const markdown = generateMarkdownReport(report);
+  await Bun.write('./regression-report.md', markdown);
+  console.log('📝 Markdown report saved to: regression-report.md');
+  console.log('');
+
+  // Exit with appropriate code
+  if (report.failures.length > 0) {
+    console.error('❌ Performance regression detected! Failing CI.');
+    process.exit(1);
+  }
+
+  if (report.warnings.length > 0) {
+    console.warn('⚠️  Performance warnings detected. Review recommended.');
+    process.exit(0); // Don't fail on warnings
+  }
+
+  console.log('✅ All benchmarks passed! No performance regression detected.');
+  process.exit(0);
+}
+
+await main();
