@@ -22,42 +22,42 @@
 //   // я правильно понимаю что объект data передается как result?
 // });
 
-interface User {
-  id: number;
-  name: string;
-}
+// interface User {
+//   id: number;
+//   name: string;
+// }
 
-interface Post {
-  id: number;
-  title: string;
-}
-interface PostComment {
-  id: number;
-  text: string;
-}
-const getId = (id: number, callback: (user: User) => void) => {
-  setTimeout(() => {
-    callback({ id, name: 'User_' + id });
-  }, 300);
-};
-const getPostsByUser = (userId: number, callback: (post: Post[]) => void) => {
-  setTimeout(() => {
-    callback([{ id: 1, title: 'Post by ' + userId }]);
-  }, 200);
-};
-const getCommentsByPost = (
-  postId: number,
-  callback: (comment: PostComment[]) => void,
-) => {
-  setTimeout(() => {
-    callback([{ id: 1, text: 'Nice post ' + postId }]);
-  }, 100);
-};
+// interface Post {
+//   id: number;
+//   title: string;
+// }
+// interface PostComment {
+//   id: number;
+//   text: string;
+// }
+// const getId = (id: number, callback: (user: User) => void) => {
+//   setTimeout(() => {
+//     callback({ id, name: 'User_' + id });
+//   }, 300);
+// };
+// const getPostsByUser = (userId: number, callback: (post: Post[]) => void) => {
+//   setTimeout(() => {
+//     callback([{ id: 1, title: 'Post by ' + userId }]);
+//   }, 200);
+// };
+// const getCommentsByPost = (
+//   postId: number,
+//   callback: (comment: PostComment[]) => void,
+// ) => {
+//   setTimeout(() => {
+//     callback([{ id: 1, text: 'Nice post ' + postId }]);
+//   }, 100);
+// };
 
-getId(42, (user) => {
-  getPostsByUser(user.id, (posts) => {
-    getCommentsByPost(posts[0].id, (comments) => {
-      console.log(user.name, posts[0].title, comments[0].text);
-    });
-  });
-});
+// getId(42, (user) => {
+//   getPostsByUser(user.id, (posts) => {
+//     getCommentsByPost(posts[0].id, (comments) => {
+//       console.log(user.name, posts[0].title, comments[0].text);
+//     });
+//   });
+// });
